@@ -1,3 +1,17 @@
+# [1.48.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.47.2...v1.48.0) (2026-09-14)
+
+
+### Bug Fixes
+
+* address CodeRabbit follow-up review on the Cursor runner ([5d61c08](https://github.com/opendatahub-io/agent-eval-harness/commit/5d61c08cd7ce74cf4fe32a8ce1227fcf28270345))
+* address review findings on the Cursor runner + judge paths ([5339c01](https://github.com/opendatahub-io/agent-eval-harness/commit/5339c010a4b95ce35e35942d4bc3589f53cd98e1))
+* **lint+docs:** trim SKILL.md under skillsaw budget; address CodeRabbit doc notes ([49f6fa9](https://github.com/opendatahub-io/agent-eval-harness/commit/49f6fa949dd157ed354a78fb6e6f79417fe077d4))
+
+
+### Features
+
+* add Cursor as an eval runner ([45a2377](https://github.com/opendatahub-io/agent-eval-harness/commit/45a237722086ac774c0b05392f9b97819787928a))
+
 ## [1.47.2](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.47.1...v1.47.2) (2026-09-02)
 
 
