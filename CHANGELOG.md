@@ -1,3 +1,17 @@
+# [1.49.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.48.0...v1.49.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* **judges:** address CodeRabbit review on OpenAI judge path ([216cf98](https://github.com/opendatahub-io/agent-eval-harness/commit/216cf981f7e535ab53f4762e2b0667141729301e))
+* **judges:** address CodeRabbit review on the rebased PR ([041fb65](https://github.com/opendatahub-io/agent-eval-harness/commit/041fb655aa43dd1504620576f21316addbef9ace))
+* **judges:** strip provider prefix in all judge-model consumers; tighten validation ([a20b82a](https://github.com/opendatahub-io/agent-eval-harness/commit/a20b82ace986afb947332649a869a79c54a39235))
+
+
+### Features
+
+* **judges:** route judge backend by model provider, independent of runner ([03c0588](https://github.com/opendatahub-io/agent-eval-harness/commit/03c0588ef9c2e839e0ce14615f479ede9653ac6f)), closes [#213](https://github.com/opendatahub-io/agent-eval-harness/issues/213) [#213](https://github.com/opendatahub-io/agent-eval-harness/issues/213) [#1](https://github.com/opendatahub-io/agent-eval-harness/issues/1) [#2](https://github.com/opendatahub-io/agent-eval-harness/issues/2) [#5](https://github.com/opendatahub-io/agent-eval-harness/issues/5)
+
 # [1.48.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.47.2...v1.48.0) (2026-09-14)
 
 
