@@ -1,3 +1,11 @@
+## [1.49.1](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.49.0...v1.49.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **judges:** fence structured file access in judge prompts (CWE-1427) ([669ebe7](https://github.com/opendatahub-io/agent-eval-harness/commit/669ebe782e6727de42ed3a9a92b0ac050eaa9bcf))
+* **judges:** re-fence tojson; fence file values via finalize, not __str__ ([34d08fa](https://github.com/opendatahub-io/agent-eval-harness/commit/34d08fae5a202239d870417740b2fd794a50bafd))
+
 # [1.49.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.48.0...v1.49.0) (2026-09-15)
 
 
