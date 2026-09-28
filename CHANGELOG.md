@@ -1,3 +1,10 @@
+# [1.52.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.51.0...v1.52.0) (2026-09-28)
+
+
+### Features
+
+* **workspace:** carry the project's settings hooks into the run settings ([8cb2ea6](https://github.com/opendatahub-io/agent-eval-harness/commit/8cb2ea62e376067b63660156dd72ac7cd3db0972))
+
 # [1.51.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.50.0...v1.51.0) (2026-09-28)
 
 
