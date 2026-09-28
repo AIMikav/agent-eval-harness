@@ -1,3 +1,10 @@
+# [1.53.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.52.0...v1.53.0) (2026-09-28)
+
+
+### Features
+
+* **providers:** direct OpenRouter transport on Kubernetes and EvalHub, provider docs (spec 014, PR-7) ([f7a204e](https://github.com/opendatahub-io/agent-eval-harness/commit/f7a204e6dbf2c033ab89c45bc09ac0379aae70c1))
+
 # [1.52.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.51.0...v1.52.0) (2026-09-28)
 
 
