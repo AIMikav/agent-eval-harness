@@ -1,3 +1,10 @@
+# [1.51.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.50.0...v1.51.0) (2026-09-28)
+
+
+### Features
+
+* **providers:** full preflight, audit-aware pooling and the key guardrail (spec 014, PR-6) ([e31c7c9](https://github.com/opendatahub-io/agent-eval-harness/commit/e31c7c9b4147023dde932465b1739a5beabc38bf)), closes [#26](https://github.com/opendatahub-io/agent-eval-harness/issues/26)
+
 # [1.50.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.49.2...v1.50.0) (2026-09-25)
 
 
