@@ -1,3 +1,10 @@
+## [1.53.2](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.1...v1.53.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **eval-run:** compile and merge both eval.yaml permission lists in every workspace builder ([7aae678](https://github.com/opendatahub-io/agent-eval-harness/commit/7aae6789b323691ae22fe3961c418df7f4b345e2))
+
 ## [1.53.1](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.0...v1.53.1) (2026-09-29)
 
 
