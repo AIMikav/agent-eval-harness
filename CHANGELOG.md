@@ -1,3 +1,11 @@
+## [1.53.1](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.0...v1.53.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **claude-code:** stop forwarding the operator's GCP credential locations under an OpenRouter plan ([e86b788](https://github.com/opendatahub-io/agent-eval-harness/commit/e86b788510755e51997938c8ba967e26a7d73dfa)), closes [#234](https://github.com/opendatahub-io/agent-eval-harness/issues/234)
+* **eval-run:** add absolute-workspace twins for relative-path Bash permission rules ([8bd409c](https://github.com/opendatahub-io/agent-eval-harness/commit/8bd409c58db06e89c152084e72b3fc6008063306)), closes [#233](https://github.com/opendatahub-io/agent-eval-harness/issues/233)
+
 # [1.53.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.52.0...v1.53.0) (2026-09-28)
 
 
