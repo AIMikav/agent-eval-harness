@@ -1,3 +1,10 @@
+## [1.53.3](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.2...v1.53.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **claude-code:** forward OpenShell's Vertex placeholder switches, and let the judges use the placeholder token ([60f12fc](https://github.com/opendatahub-io/agent-eval-harness/commit/60f12fc727b28b2f0d5f2a66db04e14d9aabef80))
+
 ## [1.53.2](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.53.1...v1.53.2) (2026-09-29)
 
 
