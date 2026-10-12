@@ -1,3 +1,13 @@
+## [1.56.1](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.56.0...v1.56.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **judges:** correct the stale untrusted-data guard guidance and drop legacy JSON boilerplate from shipped prompts ([9fe4cdd](https://github.com/opendatahub-io/agent-eval-harness/commit/9fe4cddaed7c8b11296b1572ffdc476cdf0456b6))
+* **judges:** let the comparison judge call a dimension tied instead of forcing a winner ([6845314](https://github.com/opendatahub-io/agent-eval-harness/commit/684531446cc1bd5a30ab04eafebfc46a73cf8d81))
+* **scoring:** fence the whole outputs proxy under tojson and bare outputs.files ([6fecbbb](https://github.com/opendatahub-io/agent-eval-harness/commit/6fecbbbb194970d27f4249b484827528b5f96eb1))
+* **scoring:** neutralize fence markers that appear inside evaluated material ([56b00a9](https://github.com/opendatahub-io/agent-eval-harness/commit/56b00a954d86f2e55d9fe24ab4412aa93af2ce99))
+
 # [1.56.0](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.55.0...v1.56.0) (2026-10-09)
 
 
