@@ -1,3 +1,10 @@
+## [1.56.2](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.56.1...v1.56.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **judge:** step the tool_choice ladder down on a 400 that names tool_choice ([ed062fe](https://github.com/opendatahub-io/agent-eval-harness/commit/ed062fecc3bce5f2a15c375ca0ccbd287f9a9967))
+
 ## [1.56.1](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.56.0...v1.56.1) (2026-10-12)
 
 
