@@ -1,3 +1,12 @@
+## [1.56.3](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.56.2...v1.56.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **score:** copy judge context, validate tool lists, honor scoped allows ([fc3c7c0](https://github.com/fullsend-ai/agent-eval-harness/commit/fc3c7c0e1df48a449c4e55d4e02d0cdc3ceef3c2)), closes [#240](https://github.com/fullsend-ai/agent-eval-harness/issues/240)
+* **score:** deny shell, network and sub-agent tools to judges run through Claude Code ([d0e6271](https://github.com/fullsend-ai/agent-eval-harness/commit/d0e6271425ca00d8f67cc6240840acca0ab8e798))
+* **score:** resolve the open review on the judge deny list ([3282936](https://github.com/fullsend-ai/agent-eval-harness/commit/3282936d47136ba8133e32d9d5cb34737f29bcb0)), closes [#240](https://github.com/fullsend-ai/agent-eval-harness/issues/240)
+
 ## [1.56.2](https://github.com/opendatahub-io/agent-eval-harness/compare/v1.56.1...v1.56.2) (2026-10-14)
 
 
