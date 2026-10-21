@@ -1,3 +1,10 @@
+## [1.57.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.57.0...v1.57.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** keep litellm below 1.107 on the harbor path ([#267](https://github.com/fullsend-ai/agent-eval-harness/issues/267)) ([34610e3](https://github.com/fullsend-ai/agent-eval-harness/commit/34610e39989d0fafcfb9ac552928bae3a001d78b))
+
 # [1.57.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.56.4...v1.57.0) (2026-10-21)
 
 
