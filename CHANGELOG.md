@@ -1,3 +1,10 @@
+# [1.57.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.56.4...v1.57.0) (2026-10-21)
+
+
+### Features
+
+* **judge:** carry the verdict as a structured output, with the forced tool call as the fallback ([#251](https://github.com/fullsend-ai/agent-eval-harness/issues/251)) ([f098dd2](https://github.com/fullsend-ai/agent-eval-harness/commit/f098dd294f067234dacac2f411b52bcaba2acc8f)), closes [#250](https://github.com/fullsend-ai/agent-eval-harness/issues/250)
+
 ## [1.56.4](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.56.3...v1.56.4) (2026-10-20)
 
 
