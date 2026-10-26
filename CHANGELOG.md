@@ -1,3 +1,10 @@
+# [1.58.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.57.1...v1.58.0) (2026-10-26)
+
+
+### Features
+
+* **runner:** execute the skill under test through fullsend run ([#263](https://github.com/fullsend-ai/agent-eval-harness/issues/263)) ([4ea7809](https://github.com/fullsend-ai/agent-eval-harness/commit/4ea7809a0a126cdcf696e4276e8f09b1697334ed)), closes [#261](https://github.com/fullsend-ai/agent-eval-harness/issues/261) [#261](https://github.com/fullsend-ai/agent-eval-harness/issues/261)
+
 ## [1.57.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.57.0...v1.57.1) (2026-10-21)
 
 
