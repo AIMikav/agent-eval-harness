@@ -49,11 +49,16 @@ flowchart TD
 !!! note "try/finally guarantees"
     `after_each` and `after_all` are executed from a `finally` block, so they run even
     if `before_each`, the agent, or the skill under test raises. Internally they use
-    `run_hooks_safe`, which forces `on_failure: continue` — a cleanup hook can fail
-    without masking the original error or aborting the rest of the run.
+    `run_hooks_safe`, which runs every entry with continue semantics — a cleanup hook
+    can fail without masking the original error or aborting the rest of the run.
     `before_report` likewise runs via `run_hooks_safe`. The `before_all`,
     `before_each`, and `before_scoring` phases use the strict `run_hooks`, which
     raises on failure when `on_failure: fail`.
+
+    An `after_each` entry with an explicit `on_failure: fail` fails the **case**,
+    not the run: the remaining `after_each` hooks still run, then the case's
+    `run_result.json` gets a non-zero `exit_code` and an `error` naming the hook.
+    `on_failure` defaults to `continue` for `after_each`.
 
 ## Configuration
 
@@ -84,7 +89,7 @@ hooks:
 | `command` | string | `""` | Shell command, run via `bash -c` |
 | `timeout` | int (>0) | `120` | Wall-clock seconds; on timeout the process group is `SIGTERM`ed then `SIGKILL`ed and the hook counts as failed |
 | `description` | string | `""` | Label shown in logs (falls back to the first 60 chars of `command`) |
-| `on_failure` | `fail` \| `continue` | `fail` | `fail` aborts the phase; `continue` logs and proceeds. Both are validated at config load |
+| `on_failure` | `fail` \| `continue` | `fail` (`continue` for `after_each`) | `fail` aborts the phase (for `after_each`: fails the case); `continue` logs and proceeds. Both are validated at config load |
 | `condition` | string | `""` | Bash guard (30 s timeout). Exit `0` → run the hook; anything else → `SKIP` |
 
 Hooks in a phase run **sequentially** in list order.
@@ -100,6 +105,7 @@ Every hook receives the caller's environment plus harness-injected variables:
 | `AGENT_EVAL_CONFIG` | all | Absolute path to `eval.yaml` |
 | `AGENT_EVAL_PROJECT_ROOT` | all | Project root (the harness `cwd`) |
 | `AGENT_EVAL_MODEL` | all | Skill/agent model for the run |
+| `AGENT_EVAL_HOOK_OUTPUT` | all | Absolute path this phase's hooks write `env`/`data` to (see [Hook outputs](#hook-outputs-runners-and-judges)) |
 | `CASE_ID` | per-case | Current case id |
 | `CASE_WORKSPACE` | per-case | Absolute path to the case workspace |
 | `CASE_SOURCE_DIR` | per-case | Case source dir under `dataset.path` |
@@ -114,9 +120,12 @@ not talk to the provider.
 
 ## Hook outputs → runners and judges
 
-A hook can hand data back to the harness by writing a `.hook-outputs.yaml` (or
-`.hook-outputs.json`) file **in its working directory**. The harness reads it, then
-deletes it. Two keys are recognized:
+A hook can hand data back to the harness by writing a YAML mapping to
+**`$AGENT_EVAL_HOOK_OUTPUT`**. The harness reads it after the phase, then deletes
+it. That path is under the run directory, where the agent under test cannot write
+— which is what makes the file evidence a *hook* produced it. Writing
+`.hook-outputs.yaml` (or `.hook-outputs.json`) in the working directory still
+works for the phases that run before the agent. Two keys are recognized:
 
 === "env → the agent under test"
 
@@ -126,7 +135,7 @@ deletes it. Two keys are recognized:
 
     ```bash title="scripts/mint-token.sh"
     TOKEN=$(curl -s "$JIRA_HOST/token")
-    cat > "$CASE_WORKSPACE/.hook-outputs.yaml" <<EOF
+    cat > "$AGENT_EVAL_HOOK_OUTPUT" <<EOF
     env:
       JIRA_TOKEN: "$TOKEN"
     EOF
@@ -144,6 +153,59 @@ deletes it. Two keys are recognized:
         actual = len(outputs.get("items", []))
         return actual == expected, f"{actual} vs {expected}"
     ```
+
+    `after_each` outputs are collected too and merged into the same
+    `hook_outputs.yaml`; on a key conflict the later phase (`after_each`) wins. Only
+    `data:` is used from `after_each` — the agent has already run, so `env:` is
+    ignored.
+
+    For the same reason `after_each` reads **only** `$AGENT_EVAL_HOOK_OUTPUT`: by
+    then the working directory is one the agent has had write access to, so a drop
+    file found there is not evidence a hook wrote it.
+
+## Hook results → run_result.json and judges
+
+Every per-case hook result (`before_each`, `after_each`) is written into the
+run-level `run_result.json` under `per_case.<id>`, so a capture hook that crashed
+or timed out no longer reads as a clean case:
+
+```json
+"hooks": {
+  "after_each": [
+    {"description": "Save the PR diff", "exit_code": -1, "timed_out": true,
+     "skipped": false, "duration_s": 120.0, "on_failure": "continue",
+     "log": "hooks/after_each.case-001.0.log"}
+  ]
+}
+```
+
+Judges see the same structure as `outputs["hooks"]` (present only when per-case
+hooks ran), so a gate can be written once. An entry failed when `timed_out` is
+true, or `skipped` is false and `exit_code` is non-zero:
+
+```yaml title="eval.yaml"
+judges:
+  - name: capture_ok
+    check: |
+      bad = [h["description"]
+             for entries in outputs.get("hooks", {}).values()
+             for h in entries
+             if h["timed_out"] or (not h["skipped"] and h["exit_code"])]
+      return not bad, "; ".join(bad) or "hooks clean"
+  - name: tests_pass
+    # `if:` conditions evaluate with no builtins, so no any()/all().
+    if: "not [h for h in outputs.get('hooks', {}).get('after_each', []) if h['exit_code']]"
+    check: |
+      return outputs["hook_outputs"].get("tests_passed") is True, "from after_each"
+```
+
+!!! note "No pre-flattened failure list"
+    There is deliberately no `hook_failures` field. "This case did not produce a
+    usable result" already has more than one spelling in the harness
+    (`incomplete_cases`, and the marker files evals hand-roll), and it is getting
+    **one** shared field rather than one per subsystem — see
+    issue #277. `hooks` stays either way: it is the per-hook
+    diagnostic detail, not the verdict.
 
 ## Gotchas
 

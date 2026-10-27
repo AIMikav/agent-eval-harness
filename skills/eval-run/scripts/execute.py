@@ -205,6 +205,8 @@ from agent_eval.providers.reconcile import (  # noqa: E402
 )
 from agent_eval.hooks import (  # noqa: E402 — after the early pidfile write
     HookError, build_hook_env, collect_hook_outputs,
+    collect_hook_outputs_with_source, describe_hook_failure,
+    effective_on_failure, hook_failed, hook_output_path, hook_results_record,
     run_hooks, run_hooks_safe, save_hook_data,
 )
 
@@ -582,7 +584,9 @@ def main():
                 run_hooks(config.hooks.before_all, env=hook_env,
                           cwd=Path.cwd(), log_dir=log_dir,
                           phase_name="before_all")
-                global_hook_outputs = collect_hook_outputs(Path(args.workspace))
+                global_hook_outputs = collect_hook_outputs(
+                    Path(args.workspace),
+                    trusted_path=hook_output_path(log_dir, "before_all"))
 
             save_hook_data(output_dir, global_hook_outputs.get("data"))
 
@@ -1271,6 +1275,43 @@ def _run_single_case_in_repo(runner, skill_name, case_ws, output_dir,
     return case_id, case_result
 
 
+def _merge_after_each_outputs(case_ws, merged_hook_data, log_dir, case_id):
+    """Collect what ``after_each`` wrote and merge its ``data`` into the
+    case's hook data (the later phase wins on key conflicts). ``env`` is
+    ignored — the agent has already run.
+
+    Read ONLY from the harness-owned path. `after_each` runs after the agent
+    has had write access to ``case_ws``, so a drop file sitting there now may
+    be the agent's; this phase is new, so there are no hooks relying on the
+    old location to keep working.
+    """
+    outputs = collect_hook_outputs(
+        case_ws, trusted_path=hook_output_path(log_dir, "after_each", case_id),
+        allow_cwd=False)
+    data = outputs.get("data") if isinstance(outputs, dict) else None
+    if isinstance(data, dict) and data:
+        return {**merged_hook_data, **data}
+    return merged_hook_data
+
+
+def _apply_hook_results(case_result, hook_results, output_dir):
+    """Record per-case hook results on ``case_result`` (``hooks``) and apply
+    ``on_failure: fail`` on an ``after_each`` entry with case scope: the case
+    gets a non-zero ``exit_code`` and an ``error`` naming the hook. Every
+    ``after_each`` entry has already run."""
+    case_result.update(hook_results_record(hook_results, output_dir))
+    failing = [describe_hook_failure(r, i)
+               for i, r in enumerate(hook_results.get("after_each") or [])
+               if hook_failed(r)
+               and effective_on_failure(r.hook, "after_each") == "fail"]
+    if failing:
+        msg = "hook failed: " + "; ".join(failing)
+        case_result["exit_code"] = max(case_result.get("exit_code") or 0, 1)
+        prior = case_result.get("error")
+        case_result["error"] = f"{prior}; {msg}" if prior else msg
+    return case_result
+
+
 def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
                      skill_args_template, model, mlflow_experiment,
                      mlflow_tracking_uri, system_prompt, max_budget, timeout_s,
@@ -1324,6 +1365,7 @@ def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
     case_hook_env = None
     merged_hook_data = {}
     merged_env = {}
+    hook_results = {}
     result = None
     error_msg = ""
     try:
@@ -1341,10 +1383,13 @@ def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
             if config.hooks.before_each:
                 run_hooks(config.hooks.before_each, env=case_hook_env,
                           cwd=case_ws, log_dir=log_dir,
-                          phase_name="before_each", case_id=case_id)
+                          phase_name="before_each", case_id=case_id,
+                          results=hook_results.setdefault("before_each", []))
 
             # Collect hook outputs and merge with global
-            case_outputs = collect_hook_outputs(case_ws)
+            case_outputs = collect_hook_outputs(
+                case_ws,
+                trusted_path=hook_output_path(log_dir, "before_each", case_id))
             global_env = (global_hook_outputs or {}).get("env", {})
             case_env = case_outputs.get("env", {})
             merged_env = {**global_env, **case_env}
@@ -1376,13 +1421,17 @@ def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
         # Run after_each hooks (guaranteed, like after_all)
         if config and config.hooks and config.hooks.after_each and case_hook_env:
             log_dir = output_dir / "hooks"
-            run_hooks_safe(config.hooks.after_each, env=case_hook_env,
-                           cwd=case_ws, log_dir=log_dir,
-                           phase_name="after_each", case_id=case_id)
+            hook_results["after_each"] = run_hooks_safe(
+                config.hooks.after_each, env=case_hook_env,
+                cwd=case_ws, log_dir=log_dir,
+                phase_name="after_each", case_id=case_id)
+            merged_hook_data = _merge_after_each_outputs(
+                case_ws, merged_hook_data, log_dir, case_id)
 
     if result is None:
         case_output = output_dir / "cases" / case_id
         case_output.mkdir(parents=True, exist_ok=True)
+        save_hook_data(case_output, merged_hook_data)
         failed_result = {
             "exit_code": 1,
             "duration_s": 0,
@@ -1395,6 +1444,7 @@ def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
             "error": error_msg,
             "message_ids": [],
         }
+        _apply_hook_results(failed_result, hook_results, output_dir)
         # run_result write-site 2: case mode, runner exception (crash path)
         failed_result = write_run_result(case_output / "run_result.json", failed_result)
         return case_id, failed_result
@@ -1448,10 +1498,13 @@ def _run_single_case(runner, skill_name, case_id, case_ws, output_dir,
         "error_class": result.error_class,
         "budget": result.budget,
     }
+    _apply_hook_results(case_result, hook_results, output_dir)
     # run_result write-site 3: case mode, per-case result
     case_result = write_run_result(case_output / "run_result.json", case_result)
 
     status = "OK" if result.exit_code == 0 else f"FAIL (exit {result.exit_code})"
+    if case_result.get("exit_code") and not result.exit_code:
+        status = "FAIL (hook)"
     print(f"    → {case_id}: {status} | {result.duration_s:.0f}s | "
           f"{_cost_label(case_result.get('cost_usd'), case_result.get('cost_source'), case_result.get('cost_usd_estimate'))}"
           f"{_live_markers(case_result)}",
@@ -1500,6 +1553,7 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
     case_hook_env = None
     base_env = {}
     merged_hook_data = {}
+    hook_results = {}
     steps_ctx = {}
     step_metrics = {}
     last_result = None
@@ -1521,8 +1575,11 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
             if config.hooks.before_each:
                 run_hooks(config.hooks.before_each, env=case_hook_env,
                           cwd=case_ws, log_dir=log_dir,
-                          phase_name="before_each", case_id=case_id)
-            case_outputs = collect_hook_outputs(case_ws)
+                          phase_name="before_each", case_id=case_id,
+                          results=hook_results.setdefault("before_each", []))
+            case_outputs = collect_hook_outputs(
+                case_ws,
+                trusted_path=hook_output_path(log_dir, "before_each", case_id))
             base_env = {**(global_hook_outputs or {}).get("env", {}),
                         **case_outputs.get("env", {})}
             if base_env:
@@ -1594,10 +1651,22 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
                               cwd=case_ws, log_dir=log_dir,
                               phase_name=f"before_step:{step_id}",
                               case_id=case_id)
-                    hout = collect_hook_outputs(case_ws)
-                    if hout.get("env"):
+                    # Runs between agent turns, so `case_ws` is no longer
+                    # harness-only. The cwd fallback stays for hooks that
+                    # predate HOOK_OUTPUT_ENV — but what it yields goes into
+                    # the NEXT step's environment, so `env` is honoured only
+                    # from the path the agent cannot write.
+                    hout, src = collect_hook_outputs_with_source(
+                        case_ws, trusted_path=hook_output_path(
+                            log_dir, f"before_step:{step_id}", case_id))
+                    if hout.get("env") and src == "trusted":
                         step_env.update(
                             {k: str(v) for k, v in hout["env"].items()})
+                    elif hout.get("env"):
+                        print(f"  before_step:{step_id}: ignoring `env` from "
+                              f"{case_ws}/.hook-outputs.yaml — the agent can "
+                              f"write there; use $AGENT_EVAL_HOOK_OUTPUT",
+                              file=sys.stderr)
                 step_system_prompt = system_prompt
                 if getattr(step, "runner", None) and step.runner.system_prompt:
                     # Same precedence Harbor task generation applies: a
@@ -1667,11 +1736,15 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
         error_msg = str(exc)
     finally:
         if has_hooks and config.hooks.after_each and case_hook_env is not None:
-            run_hooks_safe(config.hooks.after_each, env=case_hook_env,
-                           cwd=case_ws, log_dir=log_dir,
-                           phase_name="after_each", case_id=case_id)
+            hook_results["after_each"] = run_hooks_safe(
+                config.hooks.after_each, env=case_hook_env,
+                cwd=case_ws, log_dir=log_dir,
+                phase_name="after_each", case_id=case_id)
+            merged_hook_data = _merge_after_each_outputs(
+                case_ws, merged_hook_data, log_dir, case_id)
 
     if last_result is None:
+        save_hook_data(case_output, merged_hook_data)
         failed = {
             "exit_code": 1, "duration_s": 0, "token_usage": None,
             "cost_usd": None, "num_turns": None, "per_model_usage": None,
@@ -1681,6 +1754,7 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
             "message_ids": sorted({i for m in (step_metrics or {}).values()
                                    for i in (m.get("message_ids") or [])}),
         }
+        _apply_hook_results(failed, hook_results, output_dir)
         # run_result write-site 4: multi-step, failed result with partial steps
         failed = write_run_result(case_output / "run_result.json", failed)
         return case_id, failed
@@ -1714,6 +1788,7 @@ def _run_multi_step_case(runner, case_id, case_ws, output_dir, model,
         case_result["exit_code"] = max(case_result.get("exit_code", 0), 1)
     if aborted_at:
         case_result["aborted_at_step"] = aborted_at
+    _apply_hook_results(case_result, hook_results, output_dir)
     # run_result write-site 5: multi-step, final case result
     case_result = write_run_result(case_output / "run_result.json", case_result)
 
@@ -1887,7 +1962,9 @@ def _execute_per_case(args, config, runner, runner_cls,
             run_hooks(config.hooks.before_all, env=hook_env,
                       cwd=Path.cwd(), log_dir=log_dir,
                       phase_name="before_all")
-            global_hook_outputs = collect_hook_outputs(workspace)
+            global_hook_outputs = collect_hook_outputs(
+                workspace,
+                trusted_path=hook_output_path(log_dir, "before_all"))
 
         if effective_parallelism > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
