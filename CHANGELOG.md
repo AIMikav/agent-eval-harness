@@ -1,3 +1,10 @@
+# [1.59.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.58.1...v1.59.0) (2026-10-27)
+
+
+### Features
+
+* **workspace:** stage extra project entries listed in execution.symlinks ([#271](https://github.com/fullsend-ai/agent-eval-harness/issues/271)) ([50dd1b0](https://github.com/fullsend-ai/agent-eval-harness/commit/50dd1b08ddd6d377fb1165cd25a533192871d02d))
+
 ## [1.58.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.58.0...v1.58.1) (2026-10-27)
 
 
