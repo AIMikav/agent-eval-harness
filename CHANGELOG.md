@@ -1,3 +1,10 @@
+# [1.60.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.59.1...v1.60.0) (2026-10-27)
+
+
+### Features
+
+* **hooks:** record per-case hook results, fail cases on after_each ([#264](https://github.com/fullsend-ai/agent-eval-harness/issues/264)) ([f75e4c3](https://github.com/fullsend-ai/agent-eval-harness/commit/f75e4c304cf3d2515cdfee4e1e171b7961710f75)), closes [#259](https://github.com/fullsend-ai/agent-eval-harness/issues/259) [fullsend-ai/agents#1622](https://github.com/fullsend-ai/agents/issues/1622) [#277](https://github.com/fullsend-ai/agent-eval-harness/issues/277)
+
 ## [1.59.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.59.0...v1.59.1) (2026-10-27)
 
 
