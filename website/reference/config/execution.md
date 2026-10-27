@@ -16,6 +16,7 @@ execution:
   # env:
   #   JIRA_TOKEN: $JIRA_TOKEN   # $VAR resolved from the caller's environment
   # project_hooks: true     # carry the project's .claude/settings.json hooks (default)
+  # symlinks: [types]       # extra top-level project entries linked into each workspace
 ```
 
 ## Fields
@@ -31,6 +32,7 @@ execution:
 | `parallelism` | int \| null | `null` → **1** | Max concurrent case executions (case mode only). |
 | `env` | map | `{}` | Env vars injected into each workspace's `.claude/settings.json`. See [env](#injecting-environment-variables). |
 | `project_hooks` | bool | `true` | Append the project's `.claude/settings.json` `hooks` to each workspace's settings. See [project hooks](#carrying-the-projects-hooks). |
+| `symlinks` | list of names | `[]` | Additional top-level project entries, files or directories, to link into each staged workspace in addition to the defaults. See [staging extra project entries](#staging-extra-project-entries). |
 | `steps` | list | `[]` | Multi-step pipeline — sequential agent invocations sharing the case workspace. Replaces `skill`/`prompt`. See [Multi-step pipelines](#multi-step-pipelines). |
 
 !!! note "Nulls become harness defaults"
@@ -253,6 +255,53 @@ execution:
   project_hooks: false     # measure the skill without its production hooks
 ```
 
+## Staging extra project entries
+
+An isolated workspace is not the checkout: `workspace.py` links a fixed set of top-level
+project entries into it — `scripts/`, `CLAUDE.md`, `.context/`, `skills/` and the
+`.claude/` subdirectories (the workspace gets its own `.claude/settings.json`). A skill
+whose scripts resolve a sibling directory next to themselves needs that sibling staged
+too: under the fullsend runner the `scripts` link is materialised into a real copy inside
+the workspace, so a script resolving its project root as the parent of its own file looks
+for `<workspace>/types` and finds nothing.
+
+`execution.symlinks` names additional top-level entries to link, after the defaults:
+
+```yaml
+execution:
+  symlinks: [types]        # <project>/types -> <workspace>/types
+```
+
+- Each entry is a single name under the project root — no path separators, no `..`, not
+  absolute (a config load error otherwise). Duplicates are dropped, order kept.
+- Names the harness itself writes into a workspace are **reserved** and rejected at config
+  load: `batch.yaml`, `case_order.yaml`, `cases`, `subagents`, `repo_snapshot_before.txt`,
+  `input.yaml`, `answers.yaml`, `_metadata.yaml`, `hooks`, `tool_handlers.yaml`, `output`,
+  `repo_modifications.txt`, `.claude`, `.fullsend-runs`, the runners' staging directories
+  (`.staged-plugins`, `.agents`, `.cursor`, `.skills`) and the post-run files (`stdout.log`,
+  `stderr.log`, `events.json`, `events.jsonl`, `hook_outputs.yaml`, `steps`, `_modified`),
+  plus the first path component of every `outputs[].path` and every shared
+  `dataset.workspace.files[].dest`. Linking one would let the harness write through the
+  symlink into the project.
+- A configured entry that does not exist in the project root, or whose real location lies
+  outside the project root and every `runner.plugin_dirs` entry, is **skipped with one
+  warning**; the run goes on. A missing default is skipped silently, as before, and
+  defaults are not containment-checked.
+- A configured entry whose destination already exists in the workspace (for example a
+  per-case input file of the same name) **fails staging** with an error naming the entry
+  and the colliding path; an existing symlink to the intended project path is left as is.
+- Under [`extends:`](extends.md) the list follows the scalar-list policy: the profile's
+  entries append to the base's, deduplicated.
+- `workspace.py --symlinks a,b` replaces the whole list — the defaults **and** the
+  configured entries — when both are given.
+- This applies to **local** workspace staging (isolated per-case and batch workspaces).
+  [Harbor](../../guides/harbor.md) and [EvalHub](../../guides/evalhub.md) ship project
+  resources separately — baked into the task image, bind-mounted, or from a ConfigMap of
+  `.claude/skills/`, `scripts/`, `.context/` and `CLAUDE.md` — and do not read this key.
+  Staging that must also work under Harbor or EvalHub should use
+  [`dataset.workspace.files`](dataset.md) `{dest, source}` instead, which is materialized
+  as a real file and carried into Harbor task packages and EvalHub S3 packaging.
+
 ## Precedence
 
 CLI flags on `/eval-run` (and `execute.py`) always override the config:
@@ -264,6 +313,7 @@ CLI flags on `/eval-run` (and `execute.py`) always override the config:
 | `execution.parallelism` | `--parallelism` | sequential (1) |
 | `execution.arguments` / `prompt` | `--skill-args` | config value |
 | `models.skill` | `--model` | *(required)* |
+| `execution.symlinks` | `workspace.py --symlinks` (replaces defaults and config) | the defaults |
 
 ## Validation
 
@@ -274,6 +324,9 @@ These errors are raised at **config load time** (`EvalConfig.from_yaml`), not mi
 | `mode` not in `case`/`batch` | `execution.mode must be one of ['case', 'batch']` |
 | Both `skill` and `prompt` set | `execution.skill and execution.prompt are mutually exclusive` |
 | `project_hooks` not a boolean | `execution.project_hooks must be a boolean` |
+| `symlinks` not a list of names | `execution.symlinks must be a list of names` |
+| A `symlinks` entry with a separator, `..` or empty | `execution.symlinks[] must be a single path segment …` |
+| A `symlinks` entry naming a harness-written path | `execution.symlinks entry 'hooks' is reserved: …` |
 | Required template field missing at run time | `Missing required field in template: …` |
 
 !!! note "Deprecated top-level `skill:`"

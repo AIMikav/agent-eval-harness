@@ -11,6 +11,9 @@ Usage:
         --run-id test-001 \\
         [--cases case-001] \\
         [--symlinks scripts,.claude,CLAUDE.md]
+
+Project resources are linked into each workspace from DEFAULT_SYMLINKS plus
+the config's ``execution.symlinks`` entries; ``--symlinks`` replaces both.
 """
 
 import agent_eval._bootstrap  # noqa: F401 — auto-activate venv
@@ -26,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_eval.config import EvalConfig, deep_merge
+from agent_eval.config import EvalConfig, deep_merge, workspace_source_roots
 from agent_eval.tools.interception import extract_tool_patterns
 from agent_eval.tools.permissions import compile_permission_rules
 from agent_eval.workspace_provisioning import materialize_shared_files
@@ -35,6 +38,10 @@ from workspace_files import _copy_input_files
 # Resolve git executable to absolute path to prevent PATH hijacking (CWE-426)
 # Validated at runtime in main(), not at import time (safe for tests/imports)
 GIT_BIN = shutil.which("git")
+
+# Top-level project entries linked into every staged workspace. A config adds
+# to this list through ``execution.symlinks``; ``--symlinks`` replaces it.
+DEFAULT_SYMLINKS = ["scripts", ".claude", "CLAUDE.md", ".context", "skills"]
 
 
 def main():
@@ -47,8 +54,9 @@ def main():
     parser.add_argument(
         "--symlinks",
         default=None,
-        help="Comma-separated dirs/files to symlink into workspace "
-        "(default: scripts,.claude,CLAUDE.md,.context,skills)",
+        help="Comma-separated dirs/files to symlink into workspace; replaces "
+        "the defaults (scripts,.claude,CLAUDE.md,.context,skills) AND the "
+        "config's execution.symlinks",
     )
     args = parser.parse_args()
 
@@ -164,42 +172,25 @@ def main():
     with open(workspace / "case_order.yaml", "w") as f:
         yaml.dump(case_order, f, default_flow_style=False)
 
-    # Symlink project resources into workspace
-    # Skip .claude when tool hooks are configured — _setup_tool_hooks
-    # creates its own .claude/settings.json and symlinking would write
-    # into the project's .claude/ directory instead
+    # Symlink project resources into workspace. .claude is always skipped —
+    # we create our own settings.json (for the SubagentStop hook at minimum,
+    # plus tool interception if configured); symlinking it would write into
+    # the project's .claude/ directory instead.
     project_root = Path.cwd()
-    default_symlinks = ["scripts", ".claude", "CLAUDE.md", ".context", "skills"]
-    # Always skip .claude symlink — we create our own settings.json
-    # (for SubagentStop hook at minimum, plus tool interception if configured)
-    skip_symlinks = {".claude"}
-    symlink_names = (
-        [s.strip() for s in args.symlinks.split(",") if s.strip()]
-        if args.symlinks
-        else default_symlinks
+    symlink_names, configured = _resolve_symlink_names(config, args)
+    _link_project_entries(
+        workspace, project_root, symlink_names, configured, set(), config
     )
-    for name in symlink_names:
-        if name in skip_symlinks:
-            continue
-        p = Path(name)
-        if p.is_absolute() or ".." in p.parts:
-            print(f"WARNING: skipping invalid symlink entry: {name}", file=sys.stderr)
-            continue
-        target = project_root / name
-        link = workspace / name
-        if target.exists():
-            link.symlink_to(target.resolve())
 
-    # When .claude is skipped for hooks, symlink subdirectories (e.g. skills/)
-    if ".claude" in skip_symlinks:
-        claude_dir = project_root / ".claude"
-        if claude_dir.is_dir():
-            for sub in claude_dir.iterdir():
-                if sub.is_dir() and sub.name != "settings.json":
-                    link = workspace / ".claude" / sub.name
-                    if not link.exists():
-                        link.parent.mkdir(parents=True, exist_ok=True)
-                        link.symlink_to(sub.resolve())
+    # .claude is skipped for hooks, so symlink its subdirectories (skills/, …)
+    claude_dir = project_root / ".claude"
+    if claude_dir.is_dir():
+        for sub in claude_dir.iterdir():
+            if sub.is_dir() and sub.name != "settings.json":
+                link = workspace / ".claude" / sub.name
+                if not link.exists():
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    link.symlink_to(sub.resolve())
 
     # Generate tool interception hooks if inputs.tools configured
     if config.inputs.tools:
@@ -224,12 +215,9 @@ def _create_per_case_workspace(workspace, case_dirs, config, args):
     - Output directories from eval.yaml
     """
     project_root = Path.cwd()
-    default_symlinks = ["scripts", ".claude", "CLAUDE.md", ".context", "skills"]
-    symlink_names = (
-        [s.strip() for s in args.symlinks.split(",") if s.strip()]
-        if args.symlinks
-        else default_symlinks
-    )
+    symlink_names, configured = _resolve_symlink_names(config, args)
+    # A configured entry missing from the project warns once, not once per case.
+    warned_missing = set()
 
     case_order = []
 
@@ -296,16 +284,9 @@ def _create_per_case_workspace(workspace, case_dirs, config, args):
         )
 
         # Symlink project resources (skip .claude — we create our own)
-        for name in symlink_names:
-            if name == ".claude":
-                continue
-            p = Path(name)
-            if p.is_absolute() or ".." in p.parts:
-                continue
-            target = project_root / name
-            link = case_ws / name
-            if target.exists() and not link.exists():
-                link.symlink_to(target.resolve())
+        _link_project_entries(
+            case_ws, project_root, symlink_names, configured, warned_missing, config
+        )
 
         # Symlink .claude subdirectories (skills/, etc.)
         claude_dir = project_root / ".claude"
@@ -334,6 +315,96 @@ def _create_per_case_workspace(workspace, case_dirs, config, args):
     print(f"CASES: {len(case_dirs)}")
     for entry in case_order:
         print(f"  {entry['case_id']}: {workspace / 'cases' / entry['case_id']}")
+
+
+def _resolve_symlink_names(config, args):
+    """The project entries to link into a workspace, and which came from config.
+
+    Defaults first, then ``execution.symlinks`` (deduped, order kept). A
+    ``--symlinks`` CLI value replaces both. Returns ``(names, configured)``
+    where *configured* holds the non-default names: a default that is absent
+    from the project is skipped silently (as it always was), a configured one
+    is skipped with a warning.
+    """
+    if args.symlinks:
+        return [s.strip() for s in args.symlinks.split(",") if s.strip()], set()
+    extra = list(getattr(config.execution, "symlinks", None) or [])
+    names = list(DEFAULT_SYMLINKS)
+    for name in extra:
+        if name not in names:
+            names.append(name)
+    return names, set(extra) - set(DEFAULT_SYMLINKS)
+
+
+class StagingError(RuntimeError):
+    """Workspace staging cannot proceed (e.g. a configured entry's path is taken)."""
+
+
+def _link_project_entries(dest, project_root, names, configured, warned, config):
+    """Symlink each of *names* from *project_root* into *dest*.
+
+    ``.claude`` is always skipped (the workspace gets its own settings.json).
+    Defaults keep the lenient behaviour: absent from the project or already
+    present in *dest* → skipped silently. A configured ``execution.symlinks``
+    entry is stricter:
+
+    - missing from the project, or whose real location lies outside the
+      project root and the configured plugin dirs
+      (:func:`workspace_source_roots`) → skipped with one warning per run
+      (tracked in *warned*), so a typo or an escaping symlink surfaces
+      without failing the run;
+    - its destination already exists → left alone if it is a symlink to the
+      intended project path, otherwise a :class:`StagingError` (e.g. a copied
+      input file with the same name).
+    """
+    roots = None
+    for name in names:
+        if name == ".claude":
+            continue
+        p = Path(name)
+        if p.is_absolute() or ".." in p.parts:
+            print(f"WARNING: skipping invalid symlink entry: {name}", file=sys.stderr)
+            continue
+        target = project_root / name
+        link = dest / name
+        if name not in configured:
+            if target.exists() and not os.path.lexists(link):
+                link.symlink_to(target.resolve())
+            continue
+
+        if not target.exists():
+            _warn_once(
+                warned, name,
+                f"execution.symlinks entry {name!r} not found in "
+                f"{project_root}; not linked into the workspace",
+            )
+            continue
+        real = target.resolve()
+        if roots is None:
+            roots = workspace_source_roots(config)
+        if not any(real.is_relative_to(root) for root in roots):
+            _warn_once(
+                warned, name,
+                f"execution.symlinks entry {name!r} resolves to {real}, outside "
+                "the project root and runner.plugin_dirs; not linked into the "
+                "workspace",
+            )
+            continue
+        if os.path.lexists(link):
+            if link.is_symlink() and link.resolve() == real:
+                continue
+            raise StagingError(
+                f"execution.symlinks entry {name!r} cannot be linked: "
+                f"{link} already exists in the workspace and is not a link to "
+                f"{real}"
+            )
+        link.symlink_to(real)
+
+
+def _warn_once(warned, name, message):
+    if name not in warned:
+        warned.add(name)
+        print(f"WARNING: {message}", file=sys.stderr)
 
 
 def _create_in_repo_workspace(workspace, case_dirs, config, args):
@@ -1047,4 +1118,8 @@ def _setup_tool_hooks(workspace, config):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except StagingError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

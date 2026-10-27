@@ -347,6 +347,85 @@ def _validate_path_segment(value: str, name: str) -> str:
     return value
 
 
+# Names the harness itself writes into a staged workspace or case directory.
+# An ``execution.symlinks`` entry with one of these names would be a symlink
+# into the project, and the harness would then write through it into the
+# project tree. Defined here rather than in workspace.py (a skill script) so
+# config load can use it without an import cycle. This is the single place for
+# the guard: when you add a runner or a collect step that writes at the
+# workspace or case root, add its names to the matching group below.
+RESERVED_WORKSPACE_NAMES = frozenset(
+    {
+        # Written by workspace.py staging (workspace and case directories).
+        "batch.yaml",
+        "case_order.yaml",
+        "cases",
+        "subagents",
+        "repo_snapshot_before.txt",
+        "input.yaml",
+        "answers.yaml",
+        "_metadata.yaml",
+        "hooks",
+        "tool_handlers.yaml",
+        "output",
+        "repo_modifications.txt",
+        ".claude",
+        ".fullsend-runs",
+        # Runner staging directories: ClaudeCodeRunner (plugin staging).
+        ".staged-plugins",
+        # CodexRunner and CursorRunner (skill tree).
+        ".agents",
+        # CursorRunner (project-local CLI config).
+        ".cursor",
+        # ResponsesApiRunner (skills).
+        ".skills",
+        # Post-run files written by the runners and the collect step.
+        "stdout.log",
+        "stderr.log",
+        "events.json",
+        "events.jsonl",
+        "hook_outputs.yaml",
+        "steps",
+        "_modified",
+    }
+)
+
+
+def _reject_reserved_symlinks(config) -> None:
+    """Reject ``execution.symlinks`` entries the harness writes into a workspace.
+
+    Reserved: the static :data:`RESERVED_WORKSPACE_NAMES`, the first path
+    component of every ``outputs[].path`` and of every shared
+    ``dataset.workspace.files[].dest`` (the harness creates / copies those
+    into each workspace).
+    """
+    entries = config.execution.symlinks
+    if not entries:
+        return
+    reserved = {name: "the harness writes it into every workspace"
+                for name in RESERVED_WORKSPACE_NAMES}
+    for i, output in enumerate(config.outputs):
+        if output.path:
+            reserved.setdefault(
+                Path(output.path).parts[0],
+                f"it is the first path component of outputs[{i}].path "
+                f"({output.path!r}), which the harness creates in each workspace",
+            )
+    for i, entry in enumerate(config.dataset.workspace.files):
+        if isinstance(entry, WorkspaceFile):
+            reserved.setdefault(
+                Path(entry.dest).parts[0],
+                f"it is the first path component of "
+                f"dataset.workspace.files[{i}].dest ({entry.dest!r}), which the "
+                "harness copies into each workspace",
+            )
+    for name in entries:
+        if name in reserved:
+            raise ValueError(
+                f"execution.symlinks entry {name!r} is reserved: {reserved[name]}"
+            )
+
+
 def resolve_plugin_path(configured: str, project_root, config_dir=None) -> Path:
     """Trust-boundary resolution for plugin dirs, shared by every consumer.
 
@@ -663,6 +742,18 @@ class ExecutionConfig:
       SubagentStop/PreToolUse hooks), so a skill keeps the hooks it has in
       production — a SessionStart/compact recovery banner, a Stop guard.
       Default True; set False to run the skill with the harness hooks only.
+    - symlinks: additional top-level project entries (files or directories)
+      to link into each staged workspace in addition to the defaults
+      (``scripts``, ``.claude``, ``CLAUDE.md``, ``.context``, ``skills``).
+      Single names only — no path separators, no ``..``, not absolute, and
+      not a name the harness writes into a workspace
+      (:data:`RESERVED_WORKSPACE_NAMES`, an ``outputs[].path`` or shared
+      ``dataset.workspace.files[].dest`` first component). An entry missing
+      from the project root, or resolving outside the project root and
+      ``runner.plugin_dirs``, is skipped with one warning; one whose
+      destination already exists in the workspace fails staging.
+      Local workspace staging only (Harbor/EvalHub ship project resources
+      their own way); ``workspace.py --symlinks`` replaces the whole list.
     """
 
     mode: str = "case"
@@ -674,6 +765,9 @@ class ExecutionConfig:
     parallelism: Optional[int] = None
     env: dict = field(default_factory=dict)
     project_hooks: bool = True
+    # Extra top-level project entries linked into each staged workspace, on
+    # top of workspace.py's defaults (see the class docstring).
+    symlinks: list = field(default_factory=list)
     # Multi-step pipeline. When non-empty, REPLACES skill/prompt/arguments —
     # each entry is one agent invocation run sequentially in the shared per-case
     # workspace (see StepConfig). Mutually exclusive with skill/prompt; case
@@ -693,6 +787,22 @@ class ExecutionConfig:
                 "execution.project_hooks must be a boolean, got: "
                 f"{self.project_hooks!r}"
             )
+
+        # Each entry becomes a path component under the project root and the
+        # workspace — a single relative segment, never absolute or '..'
+        # (CWE-22). Duplicates are dropped, order kept.
+        if not isinstance(self.symlinks, list) or any(
+            not isinstance(n, str) for n in self.symlinks
+        ):
+            raise ValueError(
+                f"execution.symlinks must be a list of names, got: {self.symlinks!r}"
+            )
+        seen = []
+        for name in self.symlinks:
+            _validate_path_segment(name, "execution.symlinks[]")
+            if name not in seen:
+                seen.append(name)
+        self.symlinks = seen
 
         # Validate skill/prompt mutual exclusivity
         has_skill = bool(self.skill and self.skill.strip())
@@ -2274,6 +2384,11 @@ class EvalConfig:
             parallelism=exec_raw.get("parallelism"),
             env=exec_raw.get("env") or {},
             project_hooks=exec_raw.get("project_hooks", True),
+            # Default to [] only when absent/null; any other value goes through
+            # unchanged so ExecutionConfig rejects a non-list (`false`, "types").
+            symlinks=(
+                [] if exec_raw.get("symlinks") is None else exec_raw["symlinks"]
+            ),
             steps=steps,
         )
 
@@ -2458,6 +2573,8 @@ class EvalConfig:
                     types=o.get("types") or None,
                 )
             )
+
+        _reject_reserved_symlinks(config)
 
         # Inputs (tool interception)
         inputs_raw = raw.get("inputs", {})
