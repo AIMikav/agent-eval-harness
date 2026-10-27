@@ -1,3 +1,10 @@
+## [1.60.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.60.0...v1.60.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **runner:** keep the project's own hooks in the uploaded settings, match --no-post-script=<value>, skip links to settings files ([#274](https://github.com/fullsend-ai/agent-eval-harness/issues/274)) ([a36788a](https://github.com/fullsend-ai/agent-eval-harness/commit/a36788a879b12c699d691cf1fdba7eb286fb5455)), closes [#263](https://github.com/fullsend-ai/agent-eval-harness/issues/263)
+
 # [1.60.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.59.1...v1.60.0) (2026-10-27)
 
 
