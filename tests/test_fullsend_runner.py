@@ -452,7 +452,8 @@ class TestFullsendExecute:
         (ws / ".claude").mkdir()
         (ws / ".claude" / "settings.json").write_text(json.dumps({
             "env": {"SECRET": "x"},
-            "hooks": {"PreToolUse": [{"hooks": [{"command": "/host/tools.py"}]}]},
+            "hooks": {"PreToolUse": [{"hooks": [{
+                "command": f"python3 '{ws}/hooks/tools.py'"}]}]},
             "permissions": {"allow": ["Bash(ls)"],
                             "additionalDirectories": ["/host/dir"]},
             "model": "opus",
@@ -471,7 +472,8 @@ class TestFullsendExecute:
         (ws / ".claude").mkdir()
         original = json.dumps({
             "env": {"SECRET": "x"},
-            "hooks": {"PreToolUse": [{"hooks": [{"command": "/host/tools.py"}]}]},
+            "hooks": {"PreToolUse": [{"hooks": [{
+                "command": f"python3 '{ws}/hooks/tools.py'"}]}]},
             "permissions": {"allow": ["Bash(ls)"],
                             "additionalDirectories": ["/host/dir"]},
         }, indent=4)
@@ -491,7 +493,8 @@ class TestFullsendExecute:
         (ws / ".claude").mkdir()
         original = json.dumps({
             "env": {"SECRET": "x"},
-            "hooks": {"PreToolUse": [{"hooks": [{"command": "/host/tools.py"}]}]},
+            "hooks": {"PreToolUse": [{"hooks": [{
+                "command": f"python3 '{ws}/hooks/tools.py'"}]}]},
             "permissions": {"allow": ["Bash(ls)"],
                             "additionalDirectories": ["/host/dir"]},
             "model": "opus",
@@ -599,6 +602,161 @@ class TestFullsendExecute:
         assert result.exit_code == -1
         assert "post-script" in result.stderr
         assert not fake_fullsend.exists()
+
+    def test_no_post_script_with_value_is_a_failed_case(self, tmp_path, fake_fullsend):
+        """``--no-post-script=true`` skips the post-script just like the bare
+        flag; the exact-membership guard used to let it through."""
+        ws = _workspace(tmp_path)
+        result = _runner(tmp_path, extra_args=["--no-post-script=true"]).execute(
+            target="s", args="", workspace=ws, model="m", timeout_s=60)
+        assert result.exit_code == -1
+        assert "post-script" in result.stderr
+        assert not fake_fullsend.exists()
+
+    def test_no_post_script_false_is_accepted(self, tmp_path, fake_fullsend):
+        ws = _workspace(tmp_path)
+        result = _runner(tmp_path, extra_args=["--no-post-script=false"]).execute(
+            target="s", args="", workspace=ws, model="m", timeout_s=60)
+        assert result.exit_code == 0
+        assert "--no-post-script=false" in json.loads(fake_fullsend.read_text())["argv"]
+
+    def test_project_hooks_kept_harness_hooks_stripped(self, tmp_path, fake_fullsend):
+        """The sanitiser removes only the harness's own hook entries (commands
+        that run a script from the workspace's hooks/ directory) and keeps
+        the project's hooks workspace.py carried over, as production loads
+        them."""
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        project_stop = {"hooks": [{"type": "command",
+                                   "command": "python3 scripts/pipeline_state.py stop-guard"}]}
+        project_start = {"matcher": "compact",
+                         "hooks": [{"type": "command",
+                                    "command": "python3 scripts/pipeline_state.py post-compact-hook"}]}
+        original = json.dumps({
+            "env": {"SECRET": "x"},
+            "hooks": {
+                "SubagentStop": [{"hooks": [{
+                    "type": "command",
+                    "command": f"python3 '{ws}/hooks/subagent_stop.py'"}]}],
+                "PreToolUse": [{"matcher": "WebFetch", "hooks": [{
+                    "type": "command",
+                    "command": f"python3 '{ws}/hooks/tools.py'"}]}],
+                "Stop": [project_stop],
+                "SessionStart": [project_start],
+            },
+            "permissions": {"allow": ["Bash(ls)"],
+                            "additionalDirectories": ["/host/dir"]},
+            "model": "opus",
+        }, indent=4)
+        settings = ws / ".claude" / "settings.json"
+        settings.write_text(original)
+        settings.chmod(0o600)
+
+        result = _runner(tmp_path).execute(target="s", args="", workspace=ws,
+                                           model="m", timeout_s=60)
+
+        assert result.exit_code == 0
+        uploaded = json.loads(json.loads(fake_fullsend.read_text())["settings"])
+        assert uploaded["hooks"] == {"Stop": [project_stop],
+                                     "SessionStart": [project_start]}
+        assert "env" not in uploaded
+        assert uploaded["permissions"] == {"allow": ["Bash(ls)"]}
+        assert uploaded["model"] == "opus"
+        assert settings.read_text() == original
+        assert settings.stat().st_mode & 0o777 == 0o600
+
+    def test_all_harness_hooks_means_no_hooks_key(self, tmp_path, fake_fullsend):
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        (ws / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {
+                "SubagentStop": [{"hooks": [{
+                    "type": "command",
+                    "command": f"python3 '{ws}/hooks/subagent_stop.py'"}]}],
+                "PreToolUse": [
+                    {"matcher": "WebFetch", "hooks": [{
+                        "type": "command", "command": f"python3 {ws}/hooks/tools.py"}]},
+                    {"matcher": "Bash", "hooks": [{
+                        "type": "command", "command": f"python3 {ws}/hooks/tools.py"}]},
+                ],
+            },
+            "model": "opus",
+        }))
+        _runner(tmp_path).execute(target="s", args="", workspace=ws, model="m",
+                                  timeout_s=60)
+        uploaded = json.loads(json.loads(fake_fullsend.read_text())["settings"])
+        assert "hooks" not in uploaded
+        assert uploaded == {"model": "opus"}
+
+    def test_project_hooks_only_leave_settings_untouched(self, tmp_path, fake_fullsend):
+        """Nothing host-only to strip: the file is uploaded as written and the
+        sanitiser reports no change (no restore write)."""
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        content = {"hooks": {"Stop": [{"hooks": [{
+            "type": "command", "command": "python3 scripts/pipeline_state.py stop-guard"}]}]}}
+        (ws / ".claude" / "settings.json").write_text(json.dumps(content))
+        assert fullsend_mod._sanitize_settings(ws) is None
+        _runner(tmp_path).execute(target="s", args="", workspace=ws, model="m",
+                                  timeout_s=60)
+        uploaded = json.loads(json.loads(fake_fullsend.read_text())["settings"])
+        assert uploaded == content
+
+    @pytest.mark.parametrize("command, harness", [
+        ("python3 '{ws}/hooks/subagent_stop.py'", True),
+        ("python3 {ws}/hooks/tools.py", True),
+        ("python3 'unterminated {ws}/hooks/tools.py", True),
+        ("/usr/bin/python3 scripts/guard.py", False),
+        ("python3 scripts/guard.py /tmp/state", False),
+        ("python3 scripts/x.py > /dev/null 2>&1", False),
+        ("python3 scripts/pipeline_state.py stop-guard", False),
+        ("$CLAUDE_PROJECT_DIR/scripts/guard.sh", False),
+        ("bash -c 'echo a/b'", False),
+        ("python3 'unterminated /abs/path", False),
+        ("python3 {ws}/scripts/hooks/tools.py", False),
+        ("python3 {ws}/hooksy/tools.py", False),
+    ])
+    def test_harness_hook_rule(self, tmp_path, command, harness):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        group = {"hooks": [{"type": "command",
+                            "command": command.format(ws=ws)}]}
+        assert fullsend_mod._is_harness_hook(group, ws) is harness
+        # A prompt-type handler (no command) is never the harness's.
+        assert fullsend_mod._is_harness_hook(
+            {"hooks": [{"type": "prompt", "prompt": "check"}]}, ws) is False
+
+    def test_harness_hook_under_unresolved_workspace_path(self, tmp_path):
+        """workspace.py may have written the path before symlink resolution:
+        a command naming the workspace through a link is still the harness's."""
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        group = {"hooks": [{"type": "command",
+                            "command": f"python3 '{link}/hooks/tools.py'"}]}
+        assert fullsend_mod._is_harness_hook(group, real) is True
+        assert fullsend_mod._is_harness_hook(group, link) is True
+
+    def test_project_hooks_with_absolute_tokens_kept(self, tmp_path, fake_fullsend):
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        kept = [
+            {"hooks": [{"type": "command",
+                        "command": "/usr/bin/python3 scripts/guard.py"}]},
+            {"hooks": [{"type": "command",
+                        "command": "python3 scripts/guard.py /tmp/state"}]},
+            {"hooks": [{"type": "command",
+                        "command": "python3 scripts/x.py > /dev/null 2>&1"}]},
+        ]
+        (ws / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+            "Stop": [*kept, {"hooks": [{
+                "type": "command",
+                "command": f"python3 '{ws}/hooks/subagent_stop.py'"}]}]}}))
+        _runner(tmp_path).execute(target="s", args="", workspace=ws, model="m",
+                                  timeout_s=60)
+        uploaded = json.loads(json.loads(fake_fullsend.read_text())["settings"])
+        assert uploaded["hooks"] == {"Stop": kept}
 
     def test_symlink_copy_failure_becomes_run_result(
             self, tmp_path, fake_fullsend, monkeypatch):
@@ -999,6 +1157,293 @@ class TestMaterializeSymlinks:
         assert (copied / "back" / "note.txt").read_text() == "n"
         assert not list(copied.rglob(".scripts.fullsend-*"))
         assert not list(ws.glob(".scripts.fullsend-*"))
+
+    def test_nested_link_to_settings_file_not_copied(self, tmp_path, capsys):
+        """A committed link such as ``skills/x/host.json ->
+        ../../.claude/settings.json`` would upload the project's own host
+        settings unsanitised: the link is skipped, a sibling regular file is
+        copied, and the warning names the link."""
+        project = tmp_path / "project"
+        (project / ".claude").mkdir(parents=True)
+        (project / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"API_TOKEN": "literal-secret-value"}}))
+        (project / ".claude" / "settings.local.json").write_text(
+            json.dumps({"env": {"LOCAL_TOKEN": "literal-local-secret"}}))
+        skill = project / "skills" / "x"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# x")
+        (skill / "host.json").symlink_to(Path("..") / ".." / ".claude" / "settings.json")
+        (skill / "local.json").symlink_to(
+            Path("..") / ".." / ".claude" / "settings.local.json")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        copied = ws / "skills" / "x"
+        assert (copied / "SKILL.md").read_text() == "# x"
+        assert not (copied / "host.json").exists()
+        assert not (copied / "host.json").is_symlink()
+        assert not (copied / "local.json").exists()
+        out = capsys.readouterr().out
+        assert "not copying symlink 'host.json'" in out
+        assert "not copying symlink 'local.json'" in out
+        assert "literal-secret-value" not in out
+
+    def test_top_level_link_to_other_settings_file_dropped(self, tmp_path, capsys):
+        """A top-level link to a settings file other than the workspace's own
+        canonical one (e.g. the project's settings.local.json) is dropped; a
+        link to the canonical file is still copied (it is sanitised first)."""
+        project = tmp_path / "project"
+        (project / ".claude").mkdir(parents=True)
+        (project / ".claude" / "settings.local.json").write_text(
+            json.dumps({"env": {"SECRET": "host-only"}}))
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        (ws / ".claude" / "settings.json").write_text(json.dumps({"model": "opus"}))
+        (ws / "local.json").symlink_to(project / ".claude" / "settings.local.json")
+        (ws / "backup.json").symlink_to(Path(".claude") / "settings.json")
+
+        materialize_symlinks(ws, [project.resolve(), ws.resolve()])
+
+        assert not (ws / "local.json").exists()
+        assert (ws / "backup.json").is_file() and not (ws / "backup.json").is_symlink()
+        assert json.loads((ws / "backup.json").read_text()) == {"model": "opus"}
+        assert "local.json" in capsys.readouterr().out
+        assert json.loads((project / ".claude" / "settings.local.json").read_text()) == {
+            "env": {"SECRET": "host-only"}}
+
+    def test_nested_regular_settings_file_not_copied(self, tmp_path, capsys):
+        """A ``.claude/settings*.json`` file is never copied, regular or not:
+        the decision is by destination, not by how the tree was reached."""
+        project = tmp_path / "project"
+        (project / "fixtures" / ".claude").mkdir(parents=True)
+        (project / "fixtures" / ".claude" / "settings.json").write_text('{"model": "x"}')
+        (project / "fixtures" / ".claude" / "settings.local.json").write_text('{}')
+        (project / "fixtures" / ".claude" / "other.json").write_text('{}')
+        ws = _workspace(tmp_path)
+        (ws / "fixtures").symlink_to(project / "fixtures")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        # The nested ``.claude`` directory is a settings container: not copied.
+        assert not (ws / "fixtures" / ".claude").exists()
+        assert not list(ws.rglob("settings.json"))
+        assert not list(ws.rglob("settings.local.json"))
+        assert "not copying '.claude'" in capsys.readouterr().out
+
+    def test_link_to_nested_claude_dir_renamed_uploads_nothing(self, tmp_path, capsys):
+        """``skills/x/host-config -> <project>/components/app/.claude``: the
+        destination is named ``host-config``, but the source is a ``.claude``
+        directory, so nothing under it is copied and the warning names the
+        link."""
+        project = tmp_path / "project"
+        nested = project / "components" / "app" / ".claude"
+        nested.mkdir(parents=True)
+        (nested / "settings.local.json").write_text(
+            json.dumps({"env": {"LOCAL_TOKEN": "literal-local-secret"}}))
+        (nested / "other.json").write_text("{}")
+        skill = project / "skills" / "x"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# x")
+        (skill / "host-config").symlink_to(
+            Path("..") / ".." / "components" / "app" / ".claude")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not (ws / "skills" / "x" / "host-config").exists()
+        assert not list(ws.rglob("settings.local.json"))
+        assert not list(ws.rglob("other.json"))
+        out = capsys.readouterr().out
+        assert "not copying 'host-config'" in out
+        assert "literal-local-secret" not in out
+
+    def test_top_level_link_to_nested_claude_dir_dropped(self, tmp_path, capsys):
+        project = tmp_path / "project"
+        nested = project / "components" / "app" / ".claude"
+        nested.mkdir(parents=True)
+        (nested / "settings.local.json").write_text('{"env": {"C": "d"}}')
+        ws = _workspace(tmp_path)
+        (ws / "host-config").symlink_to(nested)
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert not (ws / "host-config").exists()
+        assert not (ws / "host-config").is_symlink()
+        assert "not copying 'host-config'" in capsys.readouterr().out
+
+    def test_nested_claude_dir_reached_directly_skipped(self, tmp_path, capsys):
+        """A ``.claude`` directory inside a followed tree (no link to it) is
+        skipped as well."""
+        project = tmp_path / "project"
+        nested = project / "components" / "app" / ".claude"
+        nested.mkdir(parents=True)
+        (nested / "settings.local.json").write_text('{"env": {"C": "d"}}')
+        (project / "components" / "app" / "main.py").write_text("print(1)")
+        ws = _workspace(tmp_path)
+        (ws / "components").symlink_to(project / "components")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "components" / "app" / "main.py").is_file()
+        assert not (ws / "components" / "app" / ".claude").exists()
+        assert not list(ws.rglob("settings.local.json"))
+        assert "not copying '.claude'" in capsys.readouterr().out
+
+    def test_directory_link_to_project_claude_uploads_no_settings(self, tmp_path):
+        project = tmp_path / "project"
+        (project / ".claude").mkdir(parents=True)
+        (project / ".claude" / "settings.json").write_text('{"env": {"A": "b"}}')
+        (project / ".claude" / "settings.local.json").write_text('{"env": {"C": "d"}}')
+        skill = project / "skills" / "x"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# x")
+        (skill / "host-config").symlink_to(Path("..") / ".." / ".claude")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not list(ws.rglob("settings.json"))
+        assert not list(ws.rglob("settings.local.json"))
+
+    def test_top_level_link_to_project_root_skips_settings(self, tmp_path):
+        project = tmp_path / "project"
+        (project / ".claude" / "skills").mkdir(parents=True)
+        (project / ".claude" / "skills" / "s.md").write_text("s")
+        (project / ".claude" / "settings.json").write_text('{"env": {"A": "b"}}')
+        (project / ".claude" / "settings.local.json").write_text('{"env": {"C": "d"}}')
+        (project / "README.md").write_text("r")
+        ws = _workspace(tmp_path)
+        (ws / "proj").symlink_to(project)
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "proj" / "README.md").is_file()
+        assert not (ws / "proj" / ".claude").exists()
+        assert not list(ws.rglob("settings.json"))
+        assert not list(ws.rglob("settings.local.json"))
+
+    def test_claude_dir_link_to_differently_named_directory_excluded(self, tmp_path):
+        project = tmp_path / "project"
+        (project / "cfg").mkdir(parents=True)
+        (project / "cfg" / "settings.json").write_text('{"env": {"A": "b"}}')
+        (project / "cfg" / "keep.txt").write_text("k")
+        (project / ".claude").symlink_to("cfg")
+        (project / "README.md").write_text("r")
+        ws = _workspace(tmp_path)
+        (ws / "proj").symlink_to(project)
+        (ws / "direct").symlink_to(project / "cfg")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "proj" / "README.md").is_file()
+        assert not (ws / "proj" / ".claude").exists()
+        assert not list(ws.rglob("settings.json"))
+        assert not (ws / "direct").exists() and not (ws / "direct").is_symlink()
+
+    def test_settings_local_link_to_other_file_excluded(self, tmp_path):
+        project = tmp_path / "project"
+        (project / ".claude").mkdir(parents=True)
+        (project / "private").mkdir()
+        (project / "private" / "local.json").write_text('{"env": {"C": "d"}}')
+        (project / ".claude" / "settings.local.json").symlink_to(
+            Path("..") / "private" / "local.json")
+        (project / "README.md").write_text("r")
+        ws = _workspace(tmp_path)
+        (ws / "proj").symlink_to(project)
+        (ws / "local-copy").symlink_to(project / "private" / "local.json")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "proj" / "README.md").is_file()
+        assert not list(ws.rglob("settings.local.json"))
+        assert not (ws / "local-copy").exists() and not (ws / "local-copy").is_symlink()
+        assert not (ws / "proj" / "private" / "local.json").exists()
+
+    def test_nested_link_to_workspace_canonical_settings_dropped(self, tmp_path):
+        """The canonical-file exception covers only a top-level link."""
+        project = tmp_path / "project"
+        (project / "skills" / "x").mkdir(parents=True)
+        (project / "skills" / "x" / "SKILL.md").write_text("# x")
+        ws = _workspace(tmp_path)
+        (ws / ".claude").mkdir()
+        (ws / ".claude" / "settings.json").write_text(json.dumps({"model": "opus"}))
+        (project / "skills" / "x" / "own.json").symlink_to(
+            ws / ".claude" / "settings.json")
+        (ws / "skills").symlink_to(project / "skills")
+        (ws / "backup.json").symlink_to(Path(".claude") / "settings.json")
+
+        materialize_symlinks(ws, [project.resolve(), ws.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not (ws / "skills" / "x" / "own.json").exists()
+        assert json.loads((ws / "backup.json").read_text()) == {"model": "opus"}
+
+    def test_alias_to_nested_settings_target_excluded(self, tmp_path, capsys):
+        """A link to the file a nested ``.claude/settings.local.json`` link
+        points at is skipped like a direct link to that settings file."""
+        project = tmp_path / "project"
+        (project / "components" / "app" / ".claude").mkdir(parents=True)
+        (project / "components" / "app" / "private.json").write_text('{"env": {"K": "v"}}')
+        (project / "components" / "app" / ".claude" / "settings.local.json").symlink_to(
+            Path("..") / "private.json")
+        (project / "skills" / "x").mkdir(parents=True)
+        (project / "skills" / "x" / "SKILL.md").write_text("# x")
+        (project / "skills" / "x" / "host.json").symlink_to(
+            Path("..") / ".." / "components" / "app" / "private.json")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not (ws / "skills" / "x" / "host.json").exists()
+        assert "host.json" in capsys.readouterr().out
+
+    def _linked_claude_project(self, tmp_path):
+        project = tmp_path / "project"
+        app = project / "components" / "app"
+        (app / "cfg").mkdir(parents=True)
+        (app / "cfg" / "settings.local.json").write_text('{"env": {"K": "literal"}}')
+        (app / ".claude").symlink_to("cfg")
+        (project / "skills" / "x").mkdir(parents=True)
+        (project / "skills" / "x" / "SKILL.md").write_text("# x")
+        return project
+
+    def test_link_to_settings_file_behind_linked_claude_dir_skipped(
+            self, tmp_path, capsys):
+        project = self._linked_claude_project(tmp_path)
+        (project / "skills" / "x" / "host.json").symlink_to(
+            Path("..") / ".." / "components" / "app" / "cfg" / "settings.local.json")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not (ws / "skills" / "x" / "host.json").exists()
+        out = capsys.readouterr().out
+        assert "host.json" in out
+        assert "settings file" in out
+
+    def test_link_to_dir_behind_linked_claude_dir_skipped_as_container(
+            self, tmp_path, capsys):
+        project = self._linked_claude_project(tmp_path)
+        (project / "skills" / "x" / "cfgdir").symlink_to(
+            Path("..") / ".." / "components" / "app" / "cfg")
+        ws = _workspace(tmp_path)
+        (ws / "skills").symlink_to(project / "skills")
+
+        materialize_symlinks(ws, [project.resolve()])
+
+        assert (ws / "skills" / "x" / "SKILL.md").is_file()
+        assert not (ws / "skills" / "x" / "cfgdir").exists()
+        assert "cfgdir" in capsys.readouterr().out
 
 
 def _run_script(script_name, args, cwd, env):
