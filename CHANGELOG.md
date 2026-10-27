@@ -1,3 +1,10 @@
+## [1.59.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.59.0...v1.59.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **anova:** stamp condition.json before a matrix cell runs ([#279](https://github.com/fullsend-ai/agent-eval-harness/issues/279)) ([3fa9e1b](https://github.com/fullsend-ai/agent-eval-harness/commit/3fa9e1bd8f05c58e09ae0e94dade153560dca321)), closes [#278](https://github.com/fullsend-ai/agent-eval-harness/issues/278)
+
 # [1.59.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.58.1...v1.59.0) (2026-10-27)
 
 
