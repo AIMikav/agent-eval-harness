@@ -1,3 +1,10 @@
+## [1.58.1](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.58.0...v1.58.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **score:** stage agent-judge outputs by copying, not via memory ([#260](https://github.com/fullsend-ai/agent-eval-harness/issues/260)) ([2251869](https://github.com/fullsend-ai/agent-eval-harness/commit/2251869ef906377e82588988ec2d798f12ee41b6)), closes [#258](https://github.com/fullsend-ai/agent-eval-harness/issues/258)
+
 # [1.58.0](https://github.com/fullsend-ai/agent-eval-harness/compare/v1.57.1...v1.58.0) (2026-10-26)
 
 
